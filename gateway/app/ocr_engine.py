@@ -2,6 +2,8 @@ from typing import Protocol
 
 from app.config import Settings
 
+CONFIG_PATH = "/app/config/glmocr.config.yaml"
+
 
 class OCREngine(Protocol):
     def parse(self, image_paths: list[str]) -> str:
@@ -14,29 +16,36 @@ class GlmOcrEngine:
     against the vLLM OpenAI-compatible endpoint. The image list is treated as the
     pages of one document and assembled into a single Markdown string.
 
-    NOTE FOR IMPLEMENTER (verify against the installed glmocr SDK during Task 9):
-    confirm the exact import path and parser entrypoint. The shape below matches
-    the SDK's documented config-driven parser; adjust names if the installed
-    version differs, keeping this `parse(image_paths) -> str` signature intact.
+    Verified against glmocr's installed API: `GlmOcr(config_path=...)` with a
+    partial YAML merged onto the SDK defaults; `.parse(images)` returns a
+    `PipelineResult` (or list of them) exposing `.markdown_result`.
     """
 
     def __init__(self, settings: Settings):
         self._settings = settings
-        self._parser = None
+        self._client = None
 
-    def _ensure_parser(self):
-        if self._parser is None:
-            from glmocr import GLMOCRParser  # heavy import, deferred
-            self._parser = GLMOCRParser.from_config(
-                config_path="/app/config/glmocr.config.yaml",
-            )
-        return self._parser
+    def _ensure_client(self):
+        if self._client is None:
+            from glmocr import GlmOcr  # heavy import, deferred
+            # mode="selfhosted" -> use the local vLLM pipeline, not the cloud MaaS API.
+            self._client = GlmOcr(config_path=CONFIG_PATH, mode="selfhosted")
+        return self._client
+
+    @staticmethod
+    def _markdown(result) -> str:
+        md = getattr(result, "markdown_result", None)
+        return md if md else ""
 
     def parse(self, image_paths: list[str]) -> str:
-        parser = self._ensure_parser()
-        result = parser.parse(image_paths)  # list = pages of one document
-        # The SDK returns per-page markdown; join into one document.
-        if isinstance(result, str):
-            return result
-        pages = [getattr(p, "markdown", str(p)) for p in result]
-        return "\n\n".join(pages)
+        client = self._ensure_client()
+        result = client.parse(
+            image_paths,  # list = pages of one document
+            save_layout_visualization=False,
+            preserve_order=True,
+        )
+        if isinstance(result, list):
+            pages = [self._markdown(r) for r in result]
+        else:
+            pages = [self._markdown(result)]
+        return "\n\n".join(p for p in pages if p)
