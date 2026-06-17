@@ -1,7 +1,7 @@
 # GLM-OCR Self-Hosted LAN Service — Design
 
 **Date:** 2026-06-17
-**Status:** Approved (design phase)
+**Status:** Approved (design phase, refined via grill-with-docs)
 **Author:** brainstorming session
 
 ## Goal
@@ -22,6 +22,11 @@ quality, and persistent across reboots.
 | GPU | NVIDIA RTX 4000 SFF Ada, **20 GB VRAM** (driver 596.59, CUDA 13.2 capable) |
 | System Python | 3.14.4 (too new for vLLM wheels — avoided by containerizing) |
 | Docker | not installed (to be installed) |
+| Network egress | Direct HTTPS (port 443) works. `http_proxy` set to `proxy.example.com:8080` for plain HTTP only; `https_proxy` unset. HF, vLLM wheels, Docker Hub, GitHub all reachable. |
+
+**Substrate decision:** Stay on WSL2 + Docker. Native Windows cannot host vLLM
+(Linux-only; on Windows it runs via WSL2/Docker anyway). Docker Desktop on Windows
+uses the WSL2 backend regardless. GPU passthrough into WSL2 is confirmed working.
 
 ## Model Choice
 
@@ -30,9 +35,8 @@ quality, and persistent across reboots.
 Rationale:
 - Purpose-built document OCR. Tops OmniDocBench V1.5 with 94.62, beating general
   VLMs up to 235B parameters.
-- 0.9B → roughly 2 GB VRAM in BF16. Fits the 20 GB GPU with large headroom for
-  context length and concurrency. Full BF16 quality costs nothing here, so no
-  quantization needed.
+- 0.9B → roughly 2 GB VRAM in BF16. Fits the 20 GB GPU with large headroom. Full
+  BF16 quality costs nothing here, so no quantization needed.
 - ~1.86 pages/second PDF throughput.
 - Native vLLM OpenAI-compatible serving. Outputs Markdown with LaTeX formula and
   table recognition.
@@ -43,93 +47,132 @@ Tradeoffs:
 - vs smaller / llama.cpp INT4 quants: unnecessary — a dedicated GPU is present, so
   full-precision BF16 is the higher-quality, no-cost choice. Rejected.
 
+### Backend version facts (confirmed)
+- vLLM **nightly** build required (model too new for a stable release).
+- `transformers >= 5.0.0`, installed from source.
+- MTP speculative decoding: `--speculative-config.method mtp
+  --speculative-config.num_speculative_tokens 1`.
+- glmocr `[selfhosted]` extra pulls **PaddlePaddle** for PP-DocLayout-V3 layout.
+- glmocr's own Flask server (`:5002 /glmocr/parse`) accepts only JSON lists of
+  **server-local image paths** — not multipart uploads, not PDFs. Therefore it is
+  NOT used as the LAN front door; we drive the glmocr **Python API** from our own
+  gateway instead.
+
 ## Architecture
 
-Three containers in one Docker Compose stack:
+**Two containers** in one Docker Compose stack (Caddy dropped — the gateway
+enforces auth itself):
 
 1. **vllm** — serves `zai-org/GLM-OCR` (BF16), OpenAI-compatible API on internal
-   port 8080, GPU access via nvidia-container-toolkit. Flags: `--max-model-len 8192`,
+   port 8080, GPU via nvidia-container-toolkit. Flags: `--max-model-len 8192`,
    MTP speculative decoding, `--allowed-local-media-path`. Not exposed to LAN.
-2. **glmocr** — official glmocr SDK `[selfhosted]` Flask server on internal port
-   8000. Performs layout analysis (PP-DocLayout-V3), PDF preprocessing
-   (PageLoader), parallel region OCR by calling the vllm service, and Markdown /
-   LaTeX assembly. Not exposed to LAN.
-3. **caddy** — reverse proxy. The only LAN-exposed port. Enforces an `X-API-Key`
-   header, then forwards to the glmocr service. Binds `0.0.0.0`.
+   Gets the full GPU (Paddle runs on CPU, see below).
+2. **gateway** — FastAPI app (the LAN front door, the only published port,
+   `0.0.0.0:8080` on the host). Uses the **glmocr Python API** as a library:
+   accepts a multipart-uploaded PDF or image, rasterizes PDFs via the SDK's
+   `PageLoader`, runs PP-DocLayout-V3 layout (**CPU**), calls the vllm service for
+   region OCR, assembles Markdown/LaTeX, and returns JSON. Enforces the API key.
 
 ### Data flow
 
 ```
-LAN client ──POST file + X-API-Key──> caddy:<LANport>
-                                         │
-                                         ▼
-                                   glmocr:8000  (layout + OCR + assemble)
-                                         │ OpenAI API
-                                         ▼
-                                   vllm:8080   (GLM-OCR inference on GPU)
-                                         │
-                            Markdown / LaTeX ◀── returned to client
+LAN client ──POST /ocr (multipart file + X-API-Key)──> gateway:8080 (host)
+                                                          │
+                            (validate key, page cap, rasterize PDF, layout on CPU)
+                                                          │ OpenAI API
+                                                          ▼
+                                                    vllm:8080 (GLM-OCR on GPU)
+                                                          │
+                              JSON {markdown, pages, elapsed_sec, filename} ◀──
 ```
 
-## Components and Responsibilities
+## API Contract
 
-- **vllm container**: inference only. Input = chat-completions requests with image
-  content. Output = recognized text. Depends on the GPU and the downloaded model.
-- **glmocr container**: orchestration. Input = uploaded PDF/image file. Output =
-  assembled Markdown/LaTeX document. Depends on vllm being healthy.
-- **caddy container**: security gateway. Input = LAN HTTP request. Output =
-  proxied response or 401. Depends on glmocr.
-- **client example** (`ocr_client.py` + curl): off-box usage. Input = a file +
-  API key + server address. Output = saved Markdown.
+- `POST /ocr` — multipart upload, field `file` (PDF or image). Header
+  `X-API-Key` required. Returns `200`:
+  ```json
+  {"markdown": "...", "pages": 12, "elapsed_sec": 6.4, "filename": "x.pdf"}
+  ```
+  Markdown carries inline/blocks LaTeX (`$...$` / `$$...$$`) and tables.
+- `GET /health` — readiness (gateway up + vllm reachable). No auth.
+- Errors: `401` (missing/bad key), `413` (over `MAX_PAGES`), `415` (unsupported
+  type), `503` (busy queue full / vllm not ready).
+
+## Behavior Decisions (from grill-with-docs)
+
+- **Processing mode:** synchronous. `POST /ocr` blocks until done, returns Markdown.
+  No async job queue (YAGNI for interactive LAN use).
+- **Page cap:** `MAX_PAGES` default **50**; larger documents rejected with `413`.
+- **Concurrency:** **1** in-flight OCR job (`MAX_CONCURRENCY=1`), others wait on a
+  bounded queue; `503` when the queue is full. Predictable latency/memory.
+- **Interface:** REST only. No web UI (clean header-key auth for machine clients).
+- **Layout engine:** PP-DocLayout-V3 on **CPU** (24 cores idle; avoids a second
+  CUDA stack in the gateway image and any VRAM contention). vLLM keeps the full GPU.
+- **Response shape:** JSON envelope (see API Contract).
 
 ## Persistence
 
-- HuggingFace model cache on a named Docker volume — model downloaded once,
-  survives container recreation.
+- Named Docker volumes: HuggingFace cache (GLM-OCR weights) and Paddle cache
+  (layout weights). Downloaded once, survive container recreation.
 - All services `restart: unless-stopped`.
-- Docker (with the stack) starts when WSL/Docker starts, so the service comes back
-  after reboot without manual steps.
+- Docker (with the stack) starts when WSL/Docker starts → service returns after
+  reboot without manual steps.
+
+## Model / Weights Acquisition
+
+- Auto-download on first start into the named volumes (GLM-OCR ~2 GB via vLLM;
+  PP-DocLayout-V3 weights via gateway). Both public; no HF token needed.
+- **Pin the working vLLM nightly by digest** once verified during implementation
+  (not a floating `latest`) → reproducible, won't silently break on reboot.
+- HTTPS egress is direct and confirmed; no proxy needed for downloads. Still
+  propagate the host `http_proxy` into containers and set `NO_PROXY` for internal
+  traffic (`localhost,127.0.0.1`, service name `vllm`, the LAN subnet) so
+  gateway↔vllm and LAN responses never route through the proxy.
 
 ## Security
 
-- API key stored in `.env` (git-ignored); Caddy rejects requests without a valid
-  `X-API-Key`.
-- Only the Caddy port is published to the host/LAN; vllm and glmocr stay on the
-  internal Compose network.
+- Single shared API key, auto-generated into `.env` (git-ignored) at setup, sent
+  as `X-API-Key`. Gateway rejects requests without a valid key (`401`).
+- Only the gateway port (`8080`) is published; vllm stays on the internal Compose
+  network.
 - Documented firewall guidance to scope the published port to the LAN subnet.
 - Plain HTTP, justified by a trusted LAN. Documented upgrade path to self-signed
-  HTTPS (Caddy can issue internal certs) if the network becomes untrusted.
+  HTTPS (add a TLS reverse proxy) if the network becomes untrusted.
 
 ## Output Handling
 
-- Markdown is the primary output; embedded math returned as LaTeX (`$...$` /
-  `$$...$$`) per GLM-OCR formula recognition. Tables as Markdown/HTML per SDK.
-- API returns Markdown body plus metadata (page count, timing). Multi-page PDFs
-  assembled into one document (SDK treats image list as pages of one document).
+- Markdown is the primary output; embedded math as LaTeX, tables as Markdown/HTML
+  per the SDK. Multi-page PDFs assembled into one Markdown document (SDK treats an
+  image list as pages of one document).
 
 ## Testing Strategy
 
-- **Unit**: PDF→image rasterization sanity; API-key rejection (401 without key).
-- **Integration**: feed a sample PDF and a sample image, assert non-empty Markdown
+- **Unit:** PDF→image rasterization sanity; API-key rejection (`401` without key);
+  page-cap rejection (`413` over 50 pages).
+- **Integration:** feed a sample PDF and a sample image, assert non-empty Markdown
   and that a known formula/table is present.
-- **LAN smoke**: from a second PC, run the client against `<host-ip>:<port>` with
-  the key; confirm Markdown returned.
-- **Troubleshooting doc**: GPU not visible in container, vLLM OOM, nightly-image
-  breakage (fallback to transformers backend), model download failures.
+- **LAN smoke:** from a second PC, run the client against `<host-ip>:8080` with the
+  key; confirm Markdown returned.
+- **Troubleshooting doc:** GPU not visible in container, vLLM OOM, nightly-image
+  breakage (fallback to transformers backend), Paddle-CPU issues, model download
+  failures, proxy/NO_PROXY mistakes.
 
 ## Deliverables
 
-- `compose.yaml`, `Caddyfile`, `.env.example`, glmocr `config.yaml`
+- `compose.yaml`, `gateway/` (FastAPI app + Dockerfile), `.env.example`,
+  glmocr `config.yaml`
 - `client/ocr_client.py` + curl examples
 - `README.md` — install, run, use, maintain, troubleshoot
 - Sample test PDF + image and a verification script
 
 ## Known Risks / Mitigations
 
-- **New model (Jan 2026)** may require nightly/dev vLLM and SGLang builds. Pin
-  working image tags during implementation; fall back to the transformers backend
-  if a nightly build is broken.
+- **New model (Jan 2026)** needs nightly vLLM + transformers from source. Pin the
+  working nightly by digest; fall back to the transformers backend if a nightly
+  breaks.
 - **WSL2 GPU in Docker** requires nvidia-container-toolkit configured for the WSL
-  Docker engine. Verify with a `nvidia-smi` test container before deploying vLLM.
-- **VRAM**: 0.9B model is comfortable, but `--gpu-memory-utilization` will be
-  tuned so the layout model and OS overhead coexist.
+  Docker engine. Verify with an `nvidia-smi` test container before deploying vLLM.
+- **PaddlePaddle (CPU)** install can be heavy; pin a known-good version. Fallback
+  is acceptable since layout runs on CPU only.
+- **Proxy/NO_PROXY** misconfiguration could route internal traffic through the
+  corporate proxy or block downloads. Explicitly set both in compose.
