@@ -1,0 +1,13 @@
+# glmocr SDK config for the gateway. Layout on CPU; OCR via the internal vLLM.
+# Verify key names against the installed glmocr version during Task 7 Step 4 / Task 10.
+model:
+  name: zai-org/GLM-OCR
+  backend: openai
+  base_url: http://vllm:8080/v1
+  api_key: EMPTY            # vLLM does not require a key on the internal network
+  max_model_len: 8192
+layout:
+  engine: pp-doclayout-v3
+  device: cpu               # PP-DocLayout-V3 on CPU; vLLM keeps the GPU
+media:
+  allowed_local_path: /scratch
