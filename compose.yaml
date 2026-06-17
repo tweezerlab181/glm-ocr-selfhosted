@@ -1,0 +1,59 @@
+services:
+  vllm:
+    # Pin by digest once verified (Task 10). Placeholder tag for first bring-up:
+    image: vllm/vllm-openai:nightly
+    command: >
+      --model zai-org/GLM-OCR
+      --served-model-name zai-org/GLM-OCR
+      --max-model-len 8192
+      --port 8080
+      --allowed-local-media-path /scratch
+      --speculative-config.method mtp
+      --speculative-config.num_speculative_tokens 1
+    environment:
+      - HF_HOME=/hf-cache
+      - http_proxy=${http_proxy:-}
+      - https_proxy=
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,vllm}
+    volumes:
+      - hf-cache:/hf-cache
+      - ocr-scratch:/scratch
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    networks: [ocrnet]
+
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    env_file: .env
+    environment:
+      - VLLM_URL=http://vllm:8080/v1
+      - SCRATCH_DIR=/scratch
+      - PADDLE_HOME=/paddle-cache
+      - http_proxy=${http_proxy:-}
+      - https_proxy=
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,vllm}
+    ports:
+      - "0.0.0.0:8080:8080"
+    volumes:
+      - paddle-cache:/paddle-cache
+      - ocr-scratch:/scratch
+    depends_on:
+      - vllm
+    restart: unless-stopped
+    networks: [ocrnet]
+
+volumes:
+  hf-cache:
+  paddle-cache:
+  ocr-scratch:
+
+networks:
+  ocrnet:
