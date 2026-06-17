@@ -1,0 +1,19 @@
+# glmocr SDK config override for the gateway. Partial — merged onto the SDK's
+# shipped defaults (glmocr/config.yaml) by load_config(). Only the keys below differ.
+# Layout runs on CPU; OCR goes to the internal vLLM OpenAI-compatible endpoint.
+pipeline:
+  maas:
+    enabled: false           # self-hosted: drive the local vLLM, not the cloud MaaS API
+  ocr_api:
+    # Full URL overrides api_host/api_port/api_path. vLLM serves on :8080 internally.
+    api_url: http://vllm:8080/v1/chat/completions
+    model: zai-org/GLM-OCR
+    api_key: EMPTY            # vLLM needs no key on the internal network
+    api_mode: openai
+  page_loader:
+    # Output-token budget per page. Must leave room under vLLM --max-model-len (8192)
+    # for the page image (~6144 tokens) + prompt, else vLLM rejects with HTTP 400.
+    max_tokens: 1536
+  layout:
+    device: cpu              # PP-DocLayout-V3 on CPU; vLLM keeps the GPU
+    model_dir: PaddlePaddle/PP-DocLayoutV3_safetensors  # HF id; cached in paddle-cache
