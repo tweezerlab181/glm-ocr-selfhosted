@@ -1,7 +1,7 @@
 services:
   vllm:
-    # Pin by digest once verified (Task 10). Placeholder tag for first bring-up:
-    image: vllm/vllm-openai:nightly
+    # Pinned by digest (verified 2026-06-17). Re-pin via the Maintain steps in README.
+    image: vllm/vllm-openai@sha256:4bdd89ecf82de7313415abd61cd4956787392e48ea85ebb73b4213deb11b7f72
     command: >
       --model zai-org/GLM-OCR
       --served-model-name zai-org/GLM-OCR
