@@ -1,0 +1,4 @@
+interface:
+  display_name: "OCR"
+  short_description: "Extract Markdown from PDFs and images"
+  default_prompt: "Use $ocr to extract Markdown from a PDF or image file."

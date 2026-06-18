@@ -208,6 +208,65 @@ NO_PROXY=<SERVER_LAN_IP> python ocr_client.py \
 
 Prints Markdown to stdout (redirect to a file), progress to stderr; non-zero exit on error.
 
+### Agent OCR skill (`$ocr` / `/ocr`)
+
+This repo also ships an agent skill that calls the same `/ocr` gateway and writes the
+Markdown next to the source file. The skill is useful when working inside Codex or
+Claude Code and you want:
+
+```text
+source: /path/to/paper.pdf
+output: /path/to/paper.md
+```
+
+Install it on a client machine that can reach the gateway:
+
+```bash
+bash scripts/install_ocr_skill.sh
+```
+
+By default the installer copies:
+
+- `skills/ocr` -> `${CODEX_HOME:-$HOME/.codex}/skills/ocr`, making `$ocr` available in Codex.
+- `skills/ocr` -> `${CLAUDE_HOME:-$HOME/.claude}/skills/ocr`.
+- `claude/commands/ocr.md` -> `${CLAUDE_HOME:-$HOME/.claude}/commands/ocr.md`, making `/ocr` available in Claude Code.
+
+Install only one target when needed:
+
+```bash
+bash scripts/install_ocr_skill.sh --codex-only
+bash scripts/install_ocr_skill.sh --claude-only
+bash scripts/install_ocr_skill.sh --dry-run
+```
+
+Configure credentials in the shell that runs the agent:
+
+```bash
+export OCR_HOST=<SERVER_LAN_IP>:8080
+export OCR_API_KEY=<KEY>
+```
+
+The runner also accepts `API_KEY`, `GLM_OCR_HOST`, `--host`, `--url`, `--key`, and
+`--output`. If env vars are not set, it will read `.secrets/credentials.env` or `.env`
+from the current directory, but it never prints secret values.
+
+Usage:
+
+```text
+Codex:  $ocr /path/to/your.pdf
+Claude: /ocr /path/to/your.pdf
+```
+
+Direct runner usage:
+
+```bash
+python3 ~/.codex/skills/ocr/scripts/run_ocr.py /path/to/your.pdf
+python3 ~/.claude/skills/ocr/scripts/run_ocr.py /path/to/your.png
+```
+
+On success, the command prints the Markdown path and writes the OCR text to a sibling
+`.md` file derived from the source filename.
+
 ### Limits & errors
 
 - Max 50 pages per request (`413` if exceeded — raise `MAX_PAGES` in the server `.env`).
