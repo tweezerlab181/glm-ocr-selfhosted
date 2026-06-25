@@ -82,10 +82,30 @@ cd glm-ocr-selfhosted
 bash scripts/gen_env.sh          # writes .env with a fresh random key (chmod 600)
 ```
 
-`.env` is git-ignored and holds your shared `API_KEY`. Open it and, **only if your
-network requires a proxy**, set `http_proxy` / `NO_PROXY` (the template default works
-for a direct-internet LAN). `NO_PROXY` must always include `vllm`, `localhost`,
-`127.0.0.1`, and your LAN subnet so internal traffic never routes through a proxy.
+`.env` is git-ignored and holds server-only settings, including the shared
+`API_KEY`. Open it and, **only if your network requires a proxy**, set
+`http_proxy` / `NO_PROXY` (the template default works for a direct-internet LAN).
+`NO_PROXY` must always include `vllm`, `localhost`, `127.0.0.1`, and your LAN
+subnet so internal traffic never routes through a proxy.
+
+If you already know the gateway address clients will use, generate the client
+credential file at the same time:
+
+```bash
+bash scripts/gen_env.sh --gateway-host <SERVER_LAN_IP>:8080
+```
+
+This writes both `.env` and `client.credentials.env` with `chmod 600`.
+Keep `.env` on the server. Share only `client.credentials.env` with client
+machines that should use the OCR skill.
+
+If `.env` already exists, generate or refresh the client file from the existing
+server API key:
+
+```bash
+bash scripts/gen_env.sh --client-credentials --gateway-host <SERVER_LAN_IP>:8080
+bash scripts/gen_env.sh --client-credentials --gateway-host <SERVER_LAN_IP>:8080 --force
+```
 
 ### 4. Bring up the stack
 
@@ -165,6 +185,15 @@ Any LAN machine. You need two things from the server operator:
 - `<SERVER_LAN_IP>` — the server PC's LAN address.
 - `<KEY>` — the API key (on the server: `grep API_KEY .env`).
 
+If the server operator gives you `client.credentials.env`, install it as the
+global OCR skill config:
+
+```bash
+mkdir -p ~/.config/glm-ocr
+cp client.credentials.env ~/.config/glm-ocr/credentials.env
+chmod 600 ~/.config/glm-ocr/credentials.env
+```
+
 > If your client PC sits behind a corporate proxy, bypass it for the server — the
 > examples use `curl --noproxy '*'` / `NO_PROXY=<SERVER_LAN_IP>`. Otherwise the proxy
 > intercepts the request and you get an HTML proxy error instead of JSON.
@@ -225,6 +254,10 @@ Install it on a client machine that can reach the gateway:
 bash scripts/install_ocr_skill.sh
 ```
 
+The installed `skills/ocr` directory is standalone. It does not need this
+repository at runtime. It only needs Python 3 and network access to a GLM-OCR
+gateway exposing `POST /ocr`.
+
 By default the installer copies:
 
 - `skills/ocr` -> `${CODEX_HOME:-$HOME/.codex}/skills/ocr`, making `$ocr` available in Codex.
@@ -246,9 +279,19 @@ export OCR_HOST=<SERVER_LAN_IP>:8080
 export OCR_API_KEY=<KEY>
 ```
 
-The runner also accepts `API_KEY`, `GLM_OCR_HOST`, `--host`, `--url`, `--key`, and
-`--output`. If env vars are not set, it will read `.secrets/credentials.env` or `.env`
-from the current directory, but it never prints secret values.
+Or install the server-provided `client.credentials.env` once:
+
+```bash
+mkdir -p ~/.config/glm-ocr
+cp client.credentials.env ~/.config/glm-ocr/credentials.env
+chmod 600 ~/.config/glm-ocr/credentials.env
+```
+
+The runner also accepts `OCR_URL`, `API_KEY`, `GLM_OCR_HOST`, `SERVER_LAN_IP`,
+`--host`, `--url`, `--key`, and `--output`. If env vars are not set, it will read
+`.secrets/credentials.env` or `.env` from the current directory, then
+`~/.config/glm-ocr/credentials.env` or `~/.config/ocr/credentials.env`, but it
+never prints secret values.
 
 Usage:
 

@@ -15,26 +15,43 @@ from pathlib import Path
 
 
 ENV_FILES = (".secrets/credentials.env", ".env")
+USER_ENV_FILES = (
+    Path("~/.config/glm-ocr/credentials.env"),
+    Path("~/.config/ocr/credentials.env"),
+)
+KNOWN_ENV_KEYS = {
+    "API_KEY",
+    "OCR_API_KEY",
+    "OCR_HOST",
+    "GLM_OCR_HOST",
+    "SERVER_LAN_IP",
+    "OCR_URL",
+}
 
 
 def default_output_path(source: Path) -> Path:
     return source.with_suffix(".md")
 
 
+def load_env_file(env_path: Path) -> None:
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key not in KNOWN_ENV_KEYS:
+            continue
+        os.environ.setdefault(key, value.strip().strip('"').strip("'"))
+
+
 def load_env_files(start_dir: Path) -> None:
     for rel_path in ENV_FILES:
-        env_path = start_dir / rel_path
-        if not env_path.exists():
-            continue
-        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-            line = raw_line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key = key.strip()
-            if key not in {"API_KEY", "OCR_API_KEY", "OCR_HOST", "GLM_OCR_HOST", "SERVER_LAN_IP"}:
-                continue
-            os.environ.setdefault(key, value.strip().strip('"').strip("'"))
+        load_env_file(start_dir / rel_path)
+    for env_path in USER_ENV_FILES:
+        load_env_file(env_path.expanduser())
 
 
 def endpoint_from(host: str | None, url: str | None = None) -> str:
@@ -107,14 +124,25 @@ def run_ocr(
     if not source.is_file():
         raise FileNotFoundError(f"Input file not found: {source}")
 
+    process_env = os.environ.copy()
     load_env_files(Path.cwd())
-    api_key = api_key or os.environ.get("OCR_API_KEY") or os.environ.get("API_KEY")
+    api_key = (
+        api_key
+        or process_env.get("OCR_API_KEY")
+        or process_env.get("API_KEY")
+        or os.environ.get("OCR_API_KEY")
+        or os.environ.get("API_KEY")
+    )
     host = (
         host
+        or process_env.get("OCR_HOST")
+        or process_env.get("GLM_OCR_HOST")
+        or process_env.get("SERVER_LAN_IP")
         or os.environ.get("OCR_HOST")
         or os.environ.get("GLM_OCR_HOST")
         or os.environ.get("SERVER_LAN_IP")
     )
+    url = url or process_env.get("OCR_URL") or os.environ.get("OCR_URL")
     if not api_key:
         raise RuntimeError("Missing API key. Set OCR_API_KEY/API_KEY or pass --key.")
 
