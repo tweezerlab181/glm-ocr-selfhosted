@@ -52,6 +52,12 @@ class OcrSkillRunnerTests(unittest.TestCase):
             "http://192.168.1.20:8080/ocr",
         )
 
+    def test_endpoint_from_rejects_non_http_url(self):
+        runner = load_runner()
+
+        with self.assertRaises(ValueError):
+            runner.endpoint_from(None, "file:///tmp/socket")
+
     def test_posts_file_and_writes_markdown_next_to_source(self):
         runner = load_runner()
 

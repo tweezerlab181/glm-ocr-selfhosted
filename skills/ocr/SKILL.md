@@ -34,7 +34,7 @@ python3 ~/.claude/skills/ocr/scripts/run_ocr.py "/path/to/document.pdf"
 ## Inputs
 
 - Accept PDF and image files supported by the gateway.
-- Accept endpoint URL from `OCR_URL` or `--url`.
+- Accept endpoint URL from `OCR_URL` or `--url`; URLs must use `http` or `https`.
 - Accept host from `OCR_HOST`, `GLM_OCR_HOST`, `SERVER_LAN_IP`, or `--host`; default to `127.0.0.1:8080`.
 - Accept API key from `OCR_API_KEY` or `API_KEY`, or `--key`.
 - If env vars are unset, load `.secrets/credentials.env` or `.env` from the current working directory, then `~/.config/glm-ocr/credentials.env` or `~/.config/ocr/credentials.env`.

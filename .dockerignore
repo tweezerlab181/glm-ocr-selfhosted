@@ -1,0 +1,11 @@
+.git/
+.env
+client.credentials.env
+.secrets/
+.venv/
+gateway/.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+docs/superpowers/

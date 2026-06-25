@@ -31,8 +31,8 @@ The two share an `ocr-scratch` volume so vLLM can read rasterized page images by
 `GET /health` (no auth) → `200 {"status":"ok","vllm":true}` when vLLM is reachable,
 else `503 {"status":"degraded","vllm":false}`.
 
-Error codes: `401` bad/missing key · `413` over `MAX_PAGES` (default 50) · `415`
-unsupported type · `503` queue full or vLLM not ready.
+Error codes: `401` bad/missing key · `413` over `MAX_UPLOAD_BYTES` or `MAX_PAGES`
+· `415` unsupported type · `503` queue full or vLLM not ready.
 
 ---
 
@@ -87,6 +87,9 @@ bash scripts/gen_env.sh          # writes .env with a fresh random key (chmod 60
 `http_proxy` / `NO_PROXY` (the template default works for a direct-internet LAN).
 `NO_PROXY` must always include `vllm`, `localhost`, `127.0.0.1`, and your LAN
 subnet so internal traffic never routes through a proxy.
+
+Default request limits are 50 pages and 100 MiB per upload. Adjust
+`MAX_PAGES` or `MAX_UPLOAD_BYTES` in `.env` only for trusted clients.
 
 If you already know the gateway address clients will use, generate the client
 credential file at the same time:
@@ -288,8 +291,9 @@ chmod 600 ~/.config/glm-ocr/credentials.env
 ```
 
 The runner also accepts `OCR_URL`, `API_KEY`, `GLM_OCR_HOST`, `SERVER_LAN_IP`,
-`--host`, `--url`, `--key`, and `--output`. If env vars are not set, it will read
-`.secrets/credentials.env` or `.env` from the current directory, then
+`--host`, `--url`, `--key`, and `--output`. `OCR_URL` / `--url` must use `http`
+or `https`. If env vars are not set, it will read `.secrets/credentials.env` or `.env`
+from the current directory, then
 `~/.config/glm-ocr/credentials.env` or `~/.config/ocr/credentials.env`, but it
 never prints secret values.
 
@@ -313,6 +317,8 @@ On success, the command prints the Markdown path and writes the OCR text to a si
 ### Limits & errors
 
 - Max 50 pages per request (`413` if exceeded — raise `MAX_PAGES` in the server `.env`).
+- Max 100 MiB upload per request (`413` if exceeded — raise `MAX_UPLOAD_BYTES` in the
+  server `.env` if trusted clients need larger files).
 - One OCR job at a time; extra requests queue, `503` when the queue is full.
 - `401` = missing/wrong key · `415` = unsupported file type.
 
@@ -340,6 +346,9 @@ On success, the command prints the Markdown path and writes the OCR text to a si
 - The shared `API_KEY` is the only credential. Keep `.env` secret; never commit a real
   key (it is git-ignored). Rotate by regenerating and restarting the gateway.
 - Only `:8080` (gateway) is published. vLLM stays internal to the `ocrnet` Docker network.
+- The gateway caps upload bytes and verifies that file content matches the claimed PDF or
+  image type before calling the OCR engine.
+- The gateway container runs as a non-root user.
 - Scope the firewall rule to your LAN subnet (see [step 6](#6-expose-to-the-lan)).
 - Plain HTTP, justified by a trusted LAN. **HTTPS upgrade path:** if the network becomes
   untrusted, put a TLS reverse proxy (Caddy / nginx) in front of `:8080` and publish only

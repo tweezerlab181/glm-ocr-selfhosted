@@ -10,6 +10,7 @@ import os
 import sys
 import uuid
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -56,13 +57,22 @@ def load_env_files(start_dir: Path) -> None:
 
 def endpoint_from(host: str | None, url: str | None = None) -> str:
     if url:
-        return url.rstrip("/")
+        return safe_http_url(url.rstrip("/"))
     host = host or "127.0.0.1:8080"
     if host.startswith(("http://", "https://")):
-        return f"{host.rstrip('/')}/ocr"
+        return safe_http_url(f"{host.rstrip('/')}/ocr")
+    if "://" in host:
+        raise ValueError("OCR host URL must use http or https")
     if ":" not in host:
         host = f"{host}:8080"
     return f"http://{host.rstrip('/')}/ocr"
+
+
+def safe_http_url(url: str) -> str:
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("OCR URL must use http or https")
+    return url
 
 
 def build_multipart(source: Path) -> tuple[bytes, str]:
@@ -84,6 +94,7 @@ def build_multipart(source: Path) -> tuple[bytes, str]:
 
 
 def post_ocr(source: Path, endpoint: str, api_key: str, timeout: float) -> dict:
+    endpoint = safe_http_url(endpoint)
     body, content_type = build_multipart(source)
     request = urllib.request.Request(
         endpoint,
@@ -95,7 +106,7 @@ def post_ocr(source: Path, endpoint: str, api_key: str, timeout: float) -> dict:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
             response_body = response.read()
             status = response.status
     except urllib.error.HTTPError as exc:
