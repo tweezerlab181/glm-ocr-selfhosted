@@ -1,5 +1,7 @@
+from io import BytesIO
 from pathlib import Path
 
+from PIL import Image, UnidentifiedImageError
 import pypdfium2 as pdfium
 
 PDF_MIMES = {"application/pdf"}
@@ -22,6 +24,23 @@ def detect_kind(content_type: str | None, filename: str) -> str:
     if ct in IMAGE_MIMES or ext in IMAGE_EXTS:
         return "image"
     raise UnsupportedType(f"unsupported type: content_type={content_type!r} ext={ext!r}")
+
+
+def validate_file_content(data: bytes, kind: str) -> None:
+    if kind == "pdf":
+        if not data[:1024].lstrip().startswith(b"%PDF-"):
+            raise UnsupportedType("file content is not a PDF")
+        return
+
+    if kind == "image":
+        try:
+            with Image.open(BytesIO(data)) as image:
+                image.verify()
+        except (OSError, UnidentifiedImageError) as exc:
+            raise UnsupportedType("file content is not a supported image") from exc
+        return
+
+    raise UnsupportedType(f"unsupported kind: {kind!r}")
 
 
 def count_pages(data: bytes, kind: str) -> int:

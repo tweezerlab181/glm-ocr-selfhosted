@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     vllm_url: str = "http://vllm:8080/v1"
     model: str = "zai-org/GLM-OCR"
     max_pages: int = 50
+    max_upload_bytes: int = 100 * 1024 * 1024
     max_concurrency: int = 1
     queue_max: int = 8
     scratch_dir: str = "/scratch"

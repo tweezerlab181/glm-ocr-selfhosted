@@ -16,8 +16,11 @@ class FakeEngine:
         return "# Page\n\n$E = mc^2$"
 
 
-def client(engine=None, gate=None, health=True, max_pages=50):
-    settings = Settings(api_key="secret", max_pages=max_pages, scratch_dir=SCRATCH)
+def client(engine=None, gate=None, health=True, max_pages=50, max_upload_bytes=None):
+    kwargs = {"api_key": "secret", "max_pages": max_pages, "scratch_dir": SCRATCH}
+    if max_upload_bytes is not None:
+        kwargs["max_upload_bytes"] = max_upload_bytes
+    settings = Settings(**kwargs)
     return TestClient(create_app(
         settings=settings,
         engine=engine or FakeEngine(),
@@ -49,6 +52,20 @@ def test_ocr_unsupported_type():
     r = c.post("/ocr", headers=HEADERS,
                files={"file": ("a.zip", b"PK\x03\x04", "application/zip")})
     assert r.status_code == 415
+
+
+def test_ocr_rejects_fake_image_content():
+    c = client()
+    r = c.post("/ocr", headers=HEADERS,
+               files={"file": ("a.png", b"not an image", "image/png")})
+    assert r.status_code == 415
+
+
+def test_ocr_rejects_oversized_upload(sample_png):
+    c = client(max_upload_bytes=len(sample_png.read_bytes()) - 1)
+    r = c.post("/ocr", headers=HEADERS,
+               files={"file": ("a.png", sample_png.read_bytes(), "image/png")})
+    assert r.status_code == 413
 
 
 def test_ocr_over_page_cap(sample_pdf):

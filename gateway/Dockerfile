@@ -19,6 +19,12 @@ RUN pip install "glmocr[selfhosted]"
 COPY gateway/app /app/app
 COPY config /app/config
 
+RUN groupadd --system app && useradd --system --gid app --home-dir /app app \
+    && mkdir -p /scratch /paddle-cache \
+    && chown -R app:app /app /scratch /paddle-cache
+
+USER app
+
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --retries=5 \
     CMD curl -fsS http://localhost:8080/health || exit 1

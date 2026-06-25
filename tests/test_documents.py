@@ -1,5 +1,6 @@
 import pytest
 
+from app import documents
 from app.documents import UnsupportedType, count_pages, detect_kind, rasterize
 
 
@@ -14,6 +15,20 @@ def test_detect_image_by_extension():
 def test_detect_unsupported():
     with pytest.raises(UnsupportedType):
         detect_kind("application/zip", "x.zip")
+
+
+def test_validate_pdf_rejects_non_pdf_bytes():
+    with pytest.raises(UnsupportedType):
+        documents.validate_file_content(b"not a pdf", "pdf")
+
+
+def test_validate_image_rejects_non_image_bytes():
+    with pytest.raises(UnsupportedType):
+        documents.validate_file_content(b"not an image", "image")
+
+
+def test_validate_image_accepts_real_png(sample_png):
+    documents.validate_file_content(sample_png.read_bytes(), "image")
 
 
 def test_count_pages_image_is_one(sample_png):

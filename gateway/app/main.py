@@ -9,7 +9,13 @@ from starlette.concurrency import run_in_threadpool
 from app.auth import require_api_key
 from app.concurrency import ConcurrencyGate, QueueFull
 from app.config import Settings, get_settings
-from app.documents import UnsupportedType, count_pages, detect_kind, rasterize
+from app.documents import (
+    UnsupportedType,
+    count_pages,
+    detect_kind,
+    rasterize,
+    validate_file_content,
+)
 from app.health import vllm_ready
 from app.ocr_engine import GlmOcrEngine, OCREngine
 
@@ -45,9 +51,15 @@ def create_app(
 
     @app.post("/ocr", dependencies=[Depends(require_api_key)])
     async def ocr(file: UploadFile = File(...)):
-        data = await file.read()
+        data = await file.read(settings.max_upload_bytes + 1)
+        if len(data) > settings.max_upload_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"upload exceeds MAX_UPLOAD_BYTES={settings.max_upload_bytes}",
+            )
         try:
             kind = detect_kind(file.content_type, file.filename or "")
+            validate_file_content(data, kind)
         except UnsupportedType as exc:
             raise HTTPException(status_code=415, detail=str(exc))
 
